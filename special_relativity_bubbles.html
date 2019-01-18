@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html>
+<style>*{margin: 0;padding: 0;border: 0; overflow: hidden}</style>
+<head><meta charset='utf-8' /><title>Special relativity visualized with bubbles.</title></head>
+<body/>
+<script>
+"use strict";
+(() => {
+const ANIMATION_SPEED = 0.005
+const MAX_SPEED = 0.999999;
+const MAX_NODES = 24;
+
+function normalizeAngle(angle){
+	if (angle > Math.PI){
+		angle -= Math.PI * 2;
+	}
+	else if (angle < -Math.PI){
+		angle += Math.PI * 2;
+	}
+	return angle;
+}
+
+class Viewer{
+	static initialize(pitch, yaw){
+		Viewer.width = 1;
+		Viewer.height = 1;
+		Viewer.unit = 1;
+		Viewer.propagationSpeed = ANIMATION_SPEED;
+		Viewer.setPitch(pitch);
+		Viewer.setYaw(yaw);
+		Viewer.d = new Vector(0, 0, 0);
+		Viewer.setVelocity(Viewer.d);
+	}
+	
+	static setVelocity(v)
+	{
+		let m = v.magnitude();
+		if (m > MAX_SPEED)
+		{
+			v.multiply(MAX_SPEED / m);
+			m = MAX_SPEED;
+		}
+		
+		Viewer.contractionAngle = (m === 0) ? 0 : Math.atan2(v.y, v.x);
+		Viewer.contractionFactor = Math.sqrt(1 - m * m);
+		Viewer.lorentzFactor = 1 / Viewer.contractionFactor;
+		Viewer.d.assign(v); 
+		Viewer.d.multiply(Viewer.propagationSpeed);
+	}
+	
+	static setDimensions(width, height){
+		Viewer.width = width;
+		Viewer.height = height;
+		Viewer.x0 = width * 0.5;
+		Viewer.y0 = height * 0.5;
+		Viewer.unit = (width > height ? height : width) * .45;
+	}
+	
+	static setPitch(pitch){
+		Viewer.pitch = normalizeAngle(pitch);
+		Viewer.pitchY = Math.cos(Viewer.pitch);
+		Viewer.pitchZ = Math.sin(Viewer.pitch);
+		Viewer.selSign = Viewer.pitch < 0 ? -1 : 1;
+		Viewer.selThr = 1 - Viewer.selSign * Math.cos(Viewer.pitch);
+		Viewer.selThr *= Viewer.unit;
+	}
+
+	static setYaw(yaw){
+		Viewer.yaw = normalizeAngle(yaw);
+		Viewer.yawX = Math.cos(Viewer.yaw);
+		Viewer.yawZ = -Math.sin(Viewer.yaw);
+	}
+	
+	static applyContraction(v){
+		v.rotateZ(-Viewer.contractionAngle);
+		v.x *= Viewer.contractionFactor;
+		v.rotateZ(Viewer.contractionAngle);
+	}
+	
+	static getX(v){
+		return (v.x * Viewer.yawX + v.z * Viewer.yawZ) * Viewer.unit;
+	}
+	
+	static getY(v){
+		return (v.x * -Viewer.yawZ * Viewer.pitchZ + v.y * Viewer.pitchY +
+			v.z * Viewer.yawX * Viewer.pitchZ) * Viewer.unit;
+	}
+}
+
+class Swave{
+	constructor(source, target){
+		this.x = source.x;
+		this.y = source.y;
+		this.z = source.z;
+		this.source = source;
+		this.target = target;
+		this.radius = 0;
+		this.time = Swave.collisionTime(source, target);
+	}
+	
+	static collisionTime(o, p){
+		const vx = Viewer.d.x;
+		const vy = Viewer.d.y;
+		const vz = Viewer.d.z;
+		const dr = Viewer.propagationSpeed;
+		// Calculate future collision time
+		const dx = (p.x - o.x);
+		const dy = (p.y - o.y);
+		const dz = (p.z - o.z);
+		const a = vx*vx + vy*vy + vz*vz - dr*dr;
+		const b = 2*(vx*dx + vy*dy + vz*dz);
+		const c = dx*dx + dy*dy + dz*dz;
+		const d = Math.sqrt(b*b - 4*a*c);
+		const inv2a = 1 / (2 * a);
+		const t0 = (-b + d) * inv2a;
+		const t1 = (-b - d) * inv2a;
+		return t1 >= t0 ? t1 : t0;
+	}
+	
+	draw(ctx){
+		if (this.radius === 0) return;
+		const x = Viewer.getX(this);
+		const y = Viewer.getY(this);
+		const x0 = Viewer.getX(this.source);
+		const y0 = Viewer.getY(this.source);
+		ctx.strokeStyle = this.source.color;
+		ctx.beginPath();
+		ctx.moveTo(Viewer.x0 + x0, Viewer.y0 + y0);
+		ctx.lineTo(Viewer.x0 + x, Viewer.y0 + y);
+		ctx.stroke();
+	}
+	
+	drawBubble(ctx){
+		if (this.radius === 0) return;
+		const x = Viewer.getX(this);
+		const y = Viewer.getY(this);
+		ctx.strokeStyle = '#0bf';
+		ctx.beginPath();
+		ctx.arc(Viewer.x0 + x, Viewer.y0 + y, Viewer.unit * this.radius, 0, Math.PI * 2);
+		ctx.stroke();
+	}	
+}
+
+class Vector{
+	constructor(x, y, z){
+		this.x = x;
+		this.y = y;
+		this.z = z;
+	}
+	
+	multiply(factor)
+	{
+		this.x *= factor;
+		this.y *= factor;
+		this.z *= factor;
+	}
+	
+	static randomNormal(){
+		const theta = Math.PI * 2 * Math.random();
+		const phi = Math.acos(1 - 2 * Math.random());
+		return new Vector(
+			Math.sin(phi) * Math.cos(theta),
+			Math.sin(phi) * Math.sin(theta),
+			Math.cos(phi));
+	}
+	
+	rotateZ(theta){
+		const x = this.x;
+		const y = this.y;
+		const s = Math.sin(theta);
+		const c = Math.cos(theta);
+		this.x = c*x + -s*y;
+		this.y = s*x + c*y;
+	}
+	
+	magnitude()
+	{
+		return Math.sqrt(this.x * this.x + this.y * this.y + this.z * this.z);
+	}
+	
+	assign(v){
+		this.x = v.x;
+		this.y = v.y;
+		this.z = v.z;
+	}
+	
+	draw(ctx){
+		const x = Viewer.getX(this);
+		const y = Viewer.getY(this);
+		ctx.strokeStyle = this.color;
+		ctx.fillStyle = this.color;
+		ctx.beginPath();
+		ctx.arc(Viewer.x0 + x, Viewer.y0 + y, Viewer.unit * 0.008, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.beginPath();
+		ctx.moveTo(Viewer.x0, Viewer.y0);
+		ctx.lineTo(Viewer.x0 + x, Viewer.y0 + y);
+		ctx.stroke();
+	}
+	
+	drawNode(ctx){
+		const x = Viewer.getX(this);
+		const y = Viewer.getY(this);
+		ctx.fillStyle = this.color;
+		ctx.beginPath();
+		ctx.arc(Viewer.x0 + x, Viewer.y0 + y, Viewer.unit * 0.008, 0, Math.PI * 2);
+		ctx.fill();
+	}
+}
+
+class VectorSystem{
+	constructor(canvas){
+		this.canvas = canvas;
+		this.ctx = canvas.getContext('2d');
+		this.vectors = [];
+		
+		this.unitUp = new Vector (0, -1, 0);
+		this.unitUp.color = "#555";
+		this.vectors.push(this.unitUp);
+		this.unitDown = new Vector (0, 1, 0);
+		this.unitDown.color = "#aaa";
+		this.vectors.push(this.unitDown);
+		
+		this.unitLeft = new Vector (-1, 0, 0);
+		this.unitLeft.color = "#bdb";
+		this.vectors.push(this.unitLeft);
+		this.unitRight = new Vector (1, 0, 0);
+		this.unitRight.color = "#9a9";
+		this.vectors.push(this.unitRight);
+		
+		this.unitFront = new Vector (0, 0, -1);
+		this.unitFront.color = "#ba9";
+		this.vectors.push(this.unitFront);
+		this.unitBack = new Vector (0, 0, 1);
+		this.unitBack.color = "#dcb";
+		this.vectors.push(this.unitBack);
+		
+		this.reset();
+	}
+
+	addWave(source, target, color){
+		target.color = color;
+		Viewer.applyContraction(target);
+		this.nodes.push(target);
+		this.waves.push(new Swave(source, target));
+	}
+	
+	reset()
+	{
+		this.time = 0;
+		this.nodes = [];
+		this.waves = [];
+		
+		let source = new Vector(0, 0, 0);
+		source.color = "#fc0";
+		const angle = Math.PI * 2 / MAX_NODES;
+		for (let i = 0; i < MAX_NODES; ++i)
+		{
+			let v = new Vector(0.618, 0, 0);
+			v.rotateZ(angle * i);
+			this.addWave(source, v, "#07c");
+		}
+		this.nodes.push(source);
+
+		this.animate = true;
+		this.redraw = false;
+		this.resize = true;
+	}
+
+	draw(){
+		let ctx = this.ctx;
+		ctx.clearRect(0, 0, Viewer.width, Viewer.height);
+		ctx.beginPath();
+		ctx.strokeStyle = "#bbb";
+		ctx.fillStyle = "#f4f4f4";
+		ctx.arc(Viewer.x0, Viewer.y0, Viewer.unit, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.stroke();
+		
+		const vpz = Viewer.pitchZ;
+
+		for (const v of this.vectors){
+			if (!((vpz < 0) ^ (v.y <= 0))) v.draw(ctx);
+		}
+		
+		ctx.globalAlpha = 0.5;
+		for (const w of this.waves){
+			if (!((vpz < 0) ^ (w.y <= 0))) w.draw(ctx);
+		}
+		ctx.globalAlpha = 1;
+		
+		for (const n of this.nodes){
+			if (!((vpz < 0) ^ (n.y <= 0))) n.drawNode(ctx);
+		}
+		
+		const absPitchZ = Math.abs(Viewer.pitchZ);
+		ctx.beginPath();
+		ctx.strokeStyle = "#bbb";
+		ctx.fillStyle = Viewer.pitchZ < 0 ? "rgba(230,230,230,.6)" : "rgba(242,242,242,.6)";
+		ctx.ellipse(Viewer.x0, Viewer.y0, Viewer.unit, Viewer.unit * absPitchZ, 0, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.stroke();
+
+		for (const v of this.vectors){
+			if ((vpz < 0) ^ (v.y <= 0)) v.draw(ctx);
+		}
+		ctx.globalAlpha = 0.5;
+		for (const w of this.waves){
+			if (((vpz < 0) ^ (w.y <= 0))) w.draw(ctx);
+		}
+		ctx.globalAlpha = 1;
+		
+		for (const n of this.nodes){
+			if (((vpz < 0) ^ (n.y <= 0))) n.drawNode(ctx);
+		}
+		
+		for (const w of this.waves) w.drawBubble(ctx);
+		
+		
+		ctx.fillStyle = "#888";
+		ctx.font = "16px Arial";
+		ctx.fillText("\uD835\uDEFE: " + Viewer.lorentzFactor, 8, 20);
+	};
+
+	update(){
+		for (const w of this.waves)
+		{
+			const dt = this.time - w.time;
+			// Check if collision happened between previous and current frame
+			if (dt >= 0)
+			{
+				// Wave starts at the center of target at collision time
+				const target = w.target;
+				w.x = target.x - dt * Viewer.d.x;
+				w.y = target.y - dt * Viewer.d.y;
+				w.z = target.z - dt * Viewer.d.z;
+				// Swap target and source
+				w.target = w.source;
+				w.source = target;
+				// Update wave radius
+				w.radius = dt * Viewer.propagationSpeed;
+				// Calculate time between previous and next collision
+				const newTarget = w.target;
+				w.time += Swave.collisionTime(w, {
+					x:newTarget.x - dt * Viewer.d.x,
+					y:newTarget.y - dt * Viewer.d.y,
+					z:newTarget.z - dt * Viewer.d.z});
+			}
+			w.radius += Viewer.propagationSpeed;
+		}
+		
+		for (const n of this.waves)
+		{
+			n.x -= Viewer.d.x;
+			n.y -= Viewer.d.y;
+			n.z -= Viewer.d.z;
+		}
+		
+		++this.time;
+	}
+}
+
+function initilizeMouser(canvas, system){
+	let x = 0;
+	let y = 0;
+	let x0 = 0;
+	let y0 = 0;
+	let moving = false;
+	let sign = 1;
+	let tId = -1;
+	
+	canvas.onmousedown = function(e){
+		if (e.buttons === 1){
+			x0 = e.clientX;
+			x = x0;
+			y0 = e.clientY;
+			y = y0;
+			moving = true;
+			sign = Viewer.selSign;
+			if (y0 - Viewer.y0 + Viewer.unit > Viewer.selThr) sign *= -1;
+		}
+	};
+
+	canvas.onmousemove = function(e){
+		if (moving){
+			const dy = e.clientY - y;
+			const dx = e.clientX - x;
+			if (Math.abs(dy) > Math.abs(dx)){
+				Viewer.setPitch(Viewer.pitch + dy * Math.PI / Viewer.unit);
+			}
+			else{
+				Viewer.setYaw(Viewer.yaw + dx * sign * Math.PI / Viewer.unit);
+			}
+
+			x = e.clientX;
+			y = e.clientY;
+			system.redraw = true;
+		}
+	};
+
+	canvas.onmouseup = function(e){
+		const dx = e.clientY - y0;
+		const dy = e.clientX - x0;
+		if (0 === Math.abs(dx) + Math.abs(dy)){
+			system.animate = !system.animate;
+			if (system.animate)
+			{
+				const v = new Vector((x0 - Viewer.x0) / Viewer.unit, (y0 - Viewer.y0) / Viewer.unit, 0);
+				if (v.magnitude() < 1.01)
+				{
+					Viewer.setVelocity(v);
+					system.reset();
+				}
+			}
+		}
+		moving = false;
+	};
+
+	canvas.onmouseenter = function(e){
+		if (e.buttons !== 1) moving = false;
+	};
+
+	canvas.addEventListener("touchstart",
+		function(e){
+			e.preventDefault();
+			let touches = e.changedTouches;
+			console.log('touches len' + touches.length);
+			if (touches.length < 1) return;
+			let t = touches[0];
+			console.log('touch 0 id' + t.identifier);
+			if (t.identifier !== tId)
+			{
+				if (tId !== -1)
+				{
+					Viewer.propagationSpeed =
+						Viewer.propagationSpeed !== ANIMATION_SPEED ?
+						ANIMATION_SPEED : ANIMATION_SPEED * 2;
+					
+					Viewer.setPitch(0);
+					Viewer.setYaw(0);
+					Viewer.setVelocity(new Vector(0, 0, 0));
+					system.reset();
+					moving = false;
+					tId = -1;
+					return;
+				}
+				tId = t.identifier;
+			}
+			x0 = t.clientX;
+			x = x0;
+			y0 = t.clientY;
+			y = y0;
+			moving = true;
+			sign = Viewer.selSign;
+			if (y0 - Viewer.y0 + Viewer.unit > Viewer.selThr) sign *= -1;
+		}, false);
+
+	canvas.addEventListener("touchend",
+		function(e){
+			e.preventDefault();
+			let touches = e.changedTouches;
+			if (touches.length < 1) return;
+			let t = touches[0];
+			if (t.identifier !== tId) return;
+			const dx = t.clientY - y0;
+			const dy = t.clientX - x0;
+			if (0 === Math.abs(dx) + Math.abs(dy)){
+				system.animate = !system.animate;
+				if (system.animate)
+				{
+					const v = new Vector((x0 - Viewer.x0) / Viewer.unit,
+						(y0 - Viewer.y0) / Viewer.unit, 0);
+					if (v.magnitude() < 1.01)
+					{
+						Viewer.setVelocity(v);
+						system.reset();
+}
+				}
+			}
+			moving = false;
+			tId = -1;
+		}, false);
+
+	canvas.addEventListener("touchcancel", 
+		function(e){
+			e.preventDefault();
+			moving = false;
+			tId = -1;
+		}, false);
+
+	canvas.addEventListener("touchmove",
+		function(e){
+			e.preventDefault();
+			if (!moving) return;
+			let touches = e.changedTouches;
+			if (touches.length < 1) return;
+			let t = touches[0];
+			if (t.identifier !== tId) return;
+			const dy = t.clientY - y;
+			const dx = t.clientX - x;
+			if (Math.abs(dy) > Math.abs(dx)){
+				Viewer.setPitch(Viewer.pitch + dy * Math.PI / Viewer.unit);
+			}
+			else{
+				Viewer.setYaw(Viewer.yaw + dx * sign * Math.PI / Viewer.unit);
+			}
+
+			x = t.clientX;
+			y = t.clientY;
+			system.redraw = true;
+		}, false);
+}
+
+let m_vectorSystem;
+
+function updateFrame(){
+	if (m_vectorSystem.resize){
+		m_vectorSystem.resize = false;
+		let canvas = m_vectorSystem.canvas;
+		canvas.width = parent.innerWidth;
+		canvas.height = parent.innerHeight;
+		Viewer.setDimensions(canvas.width, canvas.height);
+		m_vectorSystem.redraw = true;
+	}
+
+	if (m_vectorSystem.animate){
+		m_vectorSystem.update();
+		m_vectorSystem.redraw = true;
+	}
+	
+	if (m_vectorSystem.redraw){
+		m_vectorSystem.redraw = false;
+		m_vectorSystem.draw();
+	}
+
+	window.requestAnimationFrame(updateFrame);
+};
+
+window.addEventListener("resize", function(event) {
+	m_vectorSystem.resize = true;
+});
+
+window.addEventListener("load", function(event) {
+	let canvas = document.createElement("canvas");
+	document.body.appendChild(canvas); 
+	Viewer.initialize(0, 0);
+	m_vectorSystem = new VectorSystem(canvas);
+	initilizeMouser(canvas, m_vectorSystem);
+	updateFrame();
+});
+
+})();
+</script>
+</html>
